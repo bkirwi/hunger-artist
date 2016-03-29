@@ -10,7 +10,7 @@ import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.network.PlaintextChannelBuilder
 import org.apache.kafka.common.record.{CompressionType, MemoryRecords}
 import org.apache.kafka.common.requests.FetchRequest.PartitionData
-import org.apache.kafka.common.requests.{ListOffsetRequest, FetchRequest, MetadataRequest, ProduceRequest}
+import org.apache.kafka.common.requests._
 import org.apache.kafka.common.utils.SystemTime
 
 import scala.collection.JavaConverters._
@@ -44,5 +44,14 @@ object TestScript {
       Map(partition -> new ListOffsetRequest.PartitionData(-1, 1)).asJava
     )).get()
     println(offsets)
+    val commit = client.offsetCommit(new OffsetCommitRequest("bug",
+      OffsetCommitRequest.DEFAULT_GENERATION_ID,
+      OffsetCommitRequest.DEFAULT_MEMBER_ID,
+      OffsetCommitRequest.DEFAULT_RETENTION_TIME,
+      Map(partition -> new OffsetCommitRequest.PartitionData(1L, "hello")).asJava
+    )).get()
+    println(commit)
+    val fetch = client.offsetFetch(new OffsetFetchRequest("bug", List(partition).asJava)).get()
+    println(fetch)
   }
 }

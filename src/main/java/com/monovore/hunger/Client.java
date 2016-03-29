@@ -1,6 +1,5 @@
 package com.monovore.hunger;
 
-import com.google.common.collect.Maps;
 import org.apache.kafka.clients.ClientRequest;
 import org.apache.kafka.clients.KafkaClient;
 import org.apache.kafka.clients.Metadata;
@@ -15,20 +14,22 @@ import org.apache.kafka.common.network.ChannelBuilder;
 import org.apache.kafka.common.network.Selectable;
 import org.apache.kafka.common.network.Selector;
 import org.apache.kafka.common.protocol.ApiKeys;
+import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.requests.*;
-import org.apache.kafka.common.utils.CollectionUtils;
 import org.apache.kafka.common.utils.Time;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetSocketAddress;
-import java.util.*;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 public class Client {
 
@@ -133,6 +134,43 @@ public class Client {
                                 return new ListOffsetResponse(responseMap);
                             });
                 });
+    }
+
+    public CompletableFuture<GroupCoordinatorResponse> groupCoordinator(GroupCoordinatorRequest request) {
+        return communicator.send(Optional.empty(), ApiKeys.GROUP_COORDINATOR, request.toStruct())
+                .thenApply(GroupCoordinatorResponse::new);
+    }
+
+    private CompletableFuture<Node> coordinatorNode(String groupId) {
+        return groupCoordinator(new GroupCoordinatorRequest(groupId))
+                .thenCompose(response -> {
+                    Errors error = Errors.forCode(response.errorCode());
+                    if (error == Errors.NONE) {
+                        Node coordinator = response.node();
+                        return CompletableFuture.completedFuture(coordinator);
+                    }
+                    else {
+                        CompletableFuture<Node> failure = new CompletableFuture<>();
+                        failure.completeExceptionally(error.exception());
+                        return failure;
+                    }
+                });
+    }
+
+    public CompletableFuture<OffsetCommitResponse> offsetCommit(OffsetCommitRequest request) {
+        return coordinatorNode(request.groupId())
+                .thenCompose(coordinator ->
+                        communicator.send(Optional.of(coordinator), ApiKeys.OFFSET_COMMIT, request.toStruct())
+                                .thenApply(OffsetCommitResponse::new)
+                );
+    }
+
+    public CompletableFuture<OffsetFetchResponse> offsetFetch(OffsetFetchRequest request) {
+        return coordinatorNode(request.groupId())
+                .thenCompose(coordinator ->
+                        communicator.send(Optional.of(coordinator), ApiKeys.OFFSET_FETCH, request.toStruct())
+                            .thenApply(OffsetFetchResponse::new)
+                );
     }
 
     public static class Outbound {
