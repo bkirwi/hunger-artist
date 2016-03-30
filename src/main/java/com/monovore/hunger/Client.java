@@ -157,20 +157,45 @@ public class Client {
                 });
     }
 
-    public CompletableFuture<OffsetCommitResponse> offsetCommit(OffsetCommitRequest request) {
-        return coordinatorNode(request.groupId())
+    private CompletableFuture<? extends Struct> toCoordinator(String group, ApiKeys key, Struct struct) {
+        return coordinatorNode(group)
                 .thenCompose(coordinator ->
-                        communicator.send(Optional.of(coordinator), ApiKeys.OFFSET_COMMIT, request.toStruct())
-                                .thenApply(OffsetCommitResponse::new)
+                        communicator.send(Optional.of(coordinator), key, struct)
                 );
     }
 
+    public CompletableFuture<OffsetCommitResponse> offsetCommit(OffsetCommitRequest request) {
+        return toCoordinator(request.groupId(), ApiKeys.OFFSET_COMMIT, request.toStruct())
+                .thenApply(OffsetCommitResponse::new);
+    }
+
     public CompletableFuture<OffsetFetchResponse> offsetFetch(OffsetFetchRequest request) {
-        return coordinatorNode(request.groupId())
-                .thenCompose(coordinator ->
-                        communicator.send(Optional.of(coordinator), ApiKeys.OFFSET_FETCH, request.toStruct())
-                            .thenApply(OffsetFetchResponse::new)
-                );
+        return toCoordinator(request.groupId(), ApiKeys.OFFSET_FETCH, request.toStruct())
+                .thenApply(OffsetFetchResponse::new);
+    }
+
+    public CompletableFuture<JoinGroupResponse> joinGroup(JoinGroupRequest request) {
+        return toCoordinator(request.groupId(), ApiKeys.JOIN_GROUP, request.toStruct())
+                .thenApply(JoinGroupResponse::new);
+
+    }
+
+    public CompletableFuture<SyncGroupResponse> syncGroup(SyncGroupRequest request) {
+        return toCoordinator(request.groupId(), ApiKeys.SYNC_GROUP, request.toStruct())
+                .thenApply(SyncGroupResponse::new);
+
+    }
+
+    public CompletableFuture<HeartbeatResponse> heartbeat(HeartbeatRequest request) {
+        return toCoordinator(request.groupId(), ApiKeys.LEAVE_GROUP, request.toStruct())
+                .thenApply(HeartbeatResponse::new);
+
+    }
+
+    public CompletableFuture<LeaveGroupResponse> leaveGroup(LeaveGroupRequest request) {
+        return toCoordinator(request.groupId(), ApiKeys.LEAVE_GROUP, request.toStruct())
+                .thenApply(LeaveGroupResponse::new);
+
     }
 
     public static class Outbound {
