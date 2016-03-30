@@ -232,6 +232,11 @@ public class Client {
 
                     if (!kafka.ready(destination, now)) kafka.poll(POLL_TIMEOUT_MS, now);
 
+                    if (!kafka.isReady(destination, now)) {
+                        message.responseFuture.completeExceptionally(new BrokerNotAvailableException("Connection not ready!"));
+                        continue;
+                    }
+
                     RequestHeader header = kafka.nextRequestHeader(message.key);
                     RequestSend send = new RequestSend(destination.idString(), header, message.request);
                     ClientRequest request = new ClientRequest(now, true, send, response -> {
