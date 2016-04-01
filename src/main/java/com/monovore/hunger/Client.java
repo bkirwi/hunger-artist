@@ -1,14 +1,11 @@
 package com.monovore.hunger;
 
-import org.apache.kafka.clients.ClientRequest;
 import org.apache.kafka.clients.KafkaClient;
 import org.apache.kafka.clients.Metadata;
 import org.apache.kafka.clients.NetworkClient;
 import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.Node;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.errors.BrokerNotAvailableException;
-import org.apache.kafka.common.errors.DisconnectException;
 import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.network.ChannelBuilder;
 import org.apache.kafka.common.network.Selectable;
@@ -19,16 +16,12 @@ import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.requests.*;
 import org.apache.kafka.common.utils.Time;
 
-import java.io.Closeable;
-import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.stream.Collectors;
 
 public class Client {
@@ -41,8 +34,7 @@ public class Client {
 
     public CompletableFuture<MetadataResponse> metadata(MetadataRequest request) {
 
-        return communicator.send(Optional.empty(), ApiKeys.METADATA, request.toStruct())
-                .thenApply(MetadataResponse::new);
+        return communicator.anyone().metadata(request);
     }
 
     private <A> CompletableFuture<Map<Node, Map<TopicPartition, A>>> groupByNode(Map<TopicPartition, A> byPartition) {
@@ -72,8 +64,7 @@ public class Client {
                             dataByNode.entrySet().stream()
                                     .map(entry -> {
                                         ProduceRequest nodeRequest = new ProduceRequest(request.acks(), request.timeout(), entry.getValue());
-                                        return communicator.send(Optional.of(entry.getKey()), ApiKeys.PRODUCE, nodeRequest.toStruct())
-                                                .thenApply(ProduceResponse::new);
+                                        return communicator.node(entry.getKey()).produce(nodeRequest);
                                     })
                                     .collect(Collectors.toList());
 
@@ -97,8 +88,7 @@ public class Client {
                             fetchesByNode.entrySet().stream()
                                     .map(entry -> {
                                         FetchRequest fetch = new FetchRequest(request.maxWait(), request.minBytes(), entry.getValue());
-                                        return communicator.send(Optional.of(entry.getKey()), ApiKeys.FETCH, fetch.toStruct())
-                                                .thenApply(FetchResponse::new);
+                                        return communicator.node(entry.getKey()).fetch(fetch);
                                     })
                                     .collect(Collectors.toList());
 
@@ -121,8 +111,7 @@ public class Client {
                             listByNode.entrySet().stream()
                                     .map(entry -> {
                                         ListOffsetRequest list = new ListOffsetRequest(entry.getValue());
-                                        return communicator.send(Optional.of(entry.getKey()), ApiKeys.LIST_OFFSETS, list.toStruct())
-                                                .thenApply(ListOffsetResponse::new);
+                                        return communicator.node(entry.getKey()).listOffsets(list);
                                     })
                                     .collect(Collectors.toList());
 
@@ -137,152 +126,48 @@ public class Client {
     }
 
     public CompletableFuture<GroupCoordinatorResponse> groupCoordinator(GroupCoordinatorRequest request) {
-        return communicator.send(Optional.empty(), ApiKeys.GROUP_COORDINATOR, request.toStruct())
-                .thenApply(GroupCoordinatorResponse::new);
+        return communicator.anyone().groupCoordinator(request);
     }
 
-    private CompletableFuture<Node> coordinatorNode(String groupId) {
+    private CompletableFuture<ApiClient> coordinatorNode(String groupId) {
         return groupCoordinator(new GroupCoordinatorRequest(groupId))
                 .thenCompose(response -> {
                     Errors error = Errors.forCode(response.errorCode());
                     if (error == Errors.NONE) {
                         Node coordinator = response.node();
-                        return CompletableFuture.completedFuture(coordinator);
+                        return CompletableFuture.completedFuture(communicator.node(coordinator));
                     }
                     else {
-                        CompletableFuture<Node> failure = new CompletableFuture<>();
+                        CompletableFuture<ApiClient> failure = new CompletableFuture<>();
                         failure.completeExceptionally(error.exception());
                         return failure;
                     }
                 });
     }
 
-    private CompletableFuture<? extends Struct> toCoordinator(String group, ApiKeys key, Struct struct) {
-        return coordinatorNode(group)
-                .thenCompose(coordinator ->
-                        communicator.send(Optional.of(coordinator), key, struct)
-                );
-    }
-
     public CompletableFuture<OffsetCommitResponse> offsetCommit(OffsetCommitRequest request) {
-        return toCoordinator(request.groupId(), ApiKeys.OFFSET_COMMIT, request.toStruct())
-                .thenApply(OffsetCommitResponse::new);
+        return coordinatorNode(request.groupId()).thenCompose((client) -> client.offsetCommit(request));
     }
 
     public CompletableFuture<OffsetFetchResponse> offsetFetch(OffsetFetchRequest request) {
-        return toCoordinator(request.groupId(), ApiKeys.OFFSET_FETCH, request.toStruct())
-                .thenApply(OffsetFetchResponse::new);
+        return coordinatorNode(request.groupId()).thenCompose((client) -> client.offsetFetch(request));
+
     }
 
     public CompletableFuture<JoinGroupResponse> joinGroup(JoinGroupRequest request) {
-        return toCoordinator(request.groupId(), ApiKeys.JOIN_GROUP, request.toStruct())
-                .thenApply(JoinGroupResponse::new);
-
+        return coordinatorNode(request.groupId()).thenCompose((client) -> client.joinGroup(request));
     }
 
     public CompletableFuture<SyncGroupResponse> syncGroup(SyncGroupRequest request) {
-        return toCoordinator(request.groupId(), ApiKeys.SYNC_GROUP, request.toStruct())
-                .thenApply(SyncGroupResponse::new);
-
+        return coordinatorNode(request.groupId()).thenCompose((client) -> client.syncGroup(request));
     }
 
     public CompletableFuture<HeartbeatResponse> heartbeat(HeartbeatRequest request) {
-        return toCoordinator(request.groupId(), ApiKeys.LEAVE_GROUP, request.toStruct())
-                .thenApply(HeartbeatResponse::new);
-
+        return coordinatorNode(request.groupId()).thenCompose((client) -> client.heartbeat(request));
     }
 
     public CompletableFuture<LeaveGroupResponse> leaveGroup(LeaveGroupRequest request) {
-        return toCoordinator(request.groupId(), ApiKeys.LEAVE_GROUP, request.toStruct())
-                .thenApply(LeaveGroupResponse::new);
-
-    }
-
-    public static class Outbound {
-        public final Optional<Node> destination;
-        public final ApiKeys key;
-        public final Struct request;
-        public final CompletableFuture<Struct> responseFuture;
-
-        public Outbound(Optional<Node> destination, ApiKeys key, Struct request, CompletableFuture<Struct> responseFuture) {
-            this.destination = destination;
-            this.key = key;
-            this.request = request;
-            this.responseFuture = responseFuture;
-        }
-    }
-
-    public static class Communicator implements Runnable, Closeable {
-
-        private final KafkaClient kafka;
-        private final BlockingQueue<Outbound> outbound;
-        private final Time time;
-
-        private volatile boolean running = true;
-
-        private static final long POLL_TIMEOUT_MS = 1000L;
-
-        public Communicator(KafkaClient kafka, Time time) {
-            this.kafka = kafka;
-            this.outbound = new LinkedBlockingQueue<>();
-            this.time = time;
-        }
-
-        public CompletableFuture<? extends Struct> send(Optional<Node> destination, ApiKeys key, Struct request) {
-            CompletableFuture<Struct> responseFuture = new CompletableFuture<>();
-            try {
-                this.outbound.put(new Outbound(destination, key, request, responseFuture));
-            } catch (InterruptedException e) {
-                responseFuture.completeExceptionally(e);
-                Thread.currentThread().interrupt();
-            }
-            this.kafka.wakeup();
-            return responseFuture;
-        }
-
-        @Override
-        public void run() {
-            Outbound next;
-            while(running && !Thread.interrupted()) {
-                long now = time.milliseconds();
-                while ((next = outbound.poll()) != null) {
-                    final Outbound message = next;
-                    Node destination =
-                            message.destination.orElseGet(() -> kafka.leastLoadedNode(now));
-
-                    if (destination == null) {
-                        message.responseFuture.completeExceptionally(new BrokerNotAvailableException("No brokers available!"));
-                        continue;
-                    }
-
-                    if (!kafka.ready(destination, now)) kafka.poll(POLL_TIMEOUT_MS, now);
-
-                    if (!kafka.isReady(destination, now)) {
-                        message.responseFuture.completeExceptionally(new BrokerNotAvailableException("Connection not ready!"));
-                        continue;
-                    }
-
-                    RequestHeader header = kafka.nextRequestHeader(message.key);
-                    RequestSend send = new RequestSend(destination.idString(), header, message.request);
-                    ClientRequest request = new ClientRequest(now, true, send, response -> {
-                        if (response.wasDisconnected()) {
-                            message.responseFuture.completeExceptionally(new DisconnectException("Disconnect!"));
-                        } else {
-                            Struct body = response.responseBody();
-                            message.responseFuture.complete(body);
-                        }
-                    });
-                    kafka.send(request, now);
-                }
-                kafka.poll(POLL_TIMEOUT_MS, now);
-            }
-        }
-
-        @Override
-        public void close() throws IOException {
-            running = false;
-            kafka.close();
-        }
+        return coordinatorNode(request.groupId()).thenCompose((client) -> client.leaveGroup(request));
     }
 
     public static KafkaClient fromWhatever(List<InetSocketAddress> bootstrapHosts, ChannelBuilder channelBuilder, Time time, Metrics metrics) {

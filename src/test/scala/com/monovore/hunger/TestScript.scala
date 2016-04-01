@@ -4,7 +4,7 @@ import java.net.InetSocketAddress
 import java.nio.ByteBuffer
 import java.util.Collections
 
-import com.monovore.hunger.Client.Communicator
+import com.monovore.hunger._
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.network.PlaintextChannelBuilder
