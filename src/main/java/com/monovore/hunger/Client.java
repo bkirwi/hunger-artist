@@ -10,9 +10,6 @@ import org.apache.kafka.common.metrics.Metrics;
 import org.apache.kafka.common.network.ChannelBuilder;
 import org.apache.kafka.common.network.Selectable;
 import org.apache.kafka.common.network.Selector;
-import org.apache.kafka.common.protocol.ApiKeys;
-import org.apache.kafka.common.protocol.Errors;
-import org.apache.kafka.common.protocol.types.Struct;
 import org.apache.kafka.common.requests.*;
 import org.apache.kafka.common.utils.Time;
 
@@ -20,7 +17,6 @@ import java.net.InetSocketAddress;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
@@ -129,45 +125,28 @@ public class Client {
         return communicator.anyone().groupCoordinator(request);
     }
 
-    private CompletableFuture<ApiClient> coordinatorNode(String groupId) {
-        return groupCoordinator(new GroupCoordinatorRequest(groupId))
-                .thenCompose(response -> {
-                    Errors error = Errors.forCode(response.errorCode());
-                    if (error == Errors.NONE) {
-                        Node coordinator = response.node();
-                        return CompletableFuture.completedFuture(communicator.node(coordinator));
-                    }
-                    else {
-                        CompletableFuture<ApiClient> failure = new CompletableFuture<>();
-                        failure.completeExceptionally(error.exception());
-                        return failure;
-                    }
-                });
-    }
-
     public CompletableFuture<OffsetCommitResponse> offsetCommit(OffsetCommitRequest request) {
-        return coordinatorNode(request.groupId()).thenCompose((client) -> client.offsetCommit(request));
+        return communicator.coordinator(request.groupId()).thenCompose((client) -> client.offsetCommit(request));
     }
 
     public CompletableFuture<OffsetFetchResponse> offsetFetch(OffsetFetchRequest request) {
-        return coordinatorNode(request.groupId()).thenCompose((client) -> client.offsetFetch(request));
-
+        return communicator.coordinator(request.groupId()).thenCompose((client) -> client.offsetFetch(request));
     }
 
     public CompletableFuture<JoinGroupResponse> joinGroup(JoinGroupRequest request) {
-        return coordinatorNode(request.groupId()).thenCompose((client) -> client.joinGroup(request));
+        return communicator.coordinator(request.groupId()).thenCompose((client) -> client.joinGroup(request));
     }
 
     public CompletableFuture<SyncGroupResponse> syncGroup(SyncGroupRequest request) {
-        return coordinatorNode(request.groupId()).thenCompose((client) -> client.syncGroup(request));
+        return communicator.coordinator(request.groupId()).thenCompose((client) -> client.syncGroup(request));
     }
 
     public CompletableFuture<HeartbeatResponse> heartbeat(HeartbeatRequest request) {
-        return coordinatorNode(request.groupId()).thenCompose((client) -> client.heartbeat(request));
+        return communicator.coordinator(request.groupId()).thenCompose((client) -> client.heartbeat(request));
     }
 
     public CompletableFuture<LeaveGroupResponse> leaveGroup(LeaveGroupRequest request) {
-        return coordinatorNode(request.groupId()).thenCompose((client) -> client.leaveGroup(request));
+        return communicator.coordinator(request.groupId()).thenCompose((client) -> client.leaveGroup(request));
     }
 
     public static KafkaClient fromWhatever(List<InetSocketAddress> bootstrapHosts, ChannelBuilder channelBuilder, Time time, Metrics metrics) {

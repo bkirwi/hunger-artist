@@ -7,6 +7,8 @@ import org.apache.kafka.common.errors.BrokerNotAvailableException;
 import org.apache.kafka.common.errors.DisconnectException;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.types.Struct;
+import org.apache.kafka.common.requests.GroupCoordinatorRequest;
+import org.apache.kafka.common.requests.GroupCoordinatorResponse;
 import org.apache.kafka.common.requests.RequestHeader;
 import org.apache.kafka.common.requests.RequestSend;
 import org.apache.kafka.common.utils.Time;
@@ -56,7 +58,13 @@ public class Communicator implements Runnable, Closeable {
         return new ApiClient(((key, request) -> send(Optional.of(node), key, request)));
     }
 
-    CompletableFuture<Struct> send(Optional<Node> destination, ApiKeys key, Struct request) {
+    public CompletableFuture<ApiClient> coordinator(String groupID) {
+        return anyone().groupCoordinator(new GroupCoordinatorRequest(groupID))
+                .thenCompose(Futures.liftError(GroupCoordinatorResponse::errorCode))
+                .thenApply(response -> node(response.node()));
+    }
+
+    private CompletableFuture<Struct> send(Optional<Node> destination, ApiKeys key, Struct request) {
         CompletableFuture<Struct> responseFuture = new CompletableFuture<>();
         try {
             this.outbound.put(new Outbound(destination, key, request, responseFuture));

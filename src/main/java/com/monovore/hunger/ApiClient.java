@@ -8,8 +8,8 @@ import java.util.concurrent.CompletableFuture;
 
 class ApiClient {
 
-    public static interface Send {
-        public CompletableFuture<Struct> send(ApiKeys key, Struct request);
+    public interface Send {
+        CompletableFuture<Struct> send(ApiKeys key, Struct request);
     }
 
     private final Send send;
