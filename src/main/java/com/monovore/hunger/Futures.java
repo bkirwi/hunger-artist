@@ -22,12 +22,19 @@ public class Futures {
             Errors error = Errors.forCode(code);
             if (error == Errors.NONE) {
                 return CompletableFuture.completedFuture(value);
-            }
-            else {
-                CompletableFuture<T> failure = new CompletableFuture<>();
-                failure.completeExceptionally(error.exception());
-                return failure;
+            } else {
+                return exceptionalFuture(error.exception());
             }
         };
+    }
+
+    public static <T> CompletableFuture<T> exceptionalFuture(Throwable throwable) {
+        CompletableFuture<T> failure = new CompletableFuture<>();
+        failure.completeExceptionally(throwable);
+        return failure;
+    }
+
+    public static <T> CompletableFuture<T> lifting(Function<T, Short> getErrorCode, CompletableFuture<T> future) {
+        return future.thenCompose(liftError(getErrorCode));
     }
 }
