@@ -13,6 +13,8 @@ scalaVersion := "2.11.7"
 
 scalacOptions := Seq("-Xexperimental")
 
+javacOptions ++= Seq("-source", "1.8", "-target", "1.8")
+
 cancelable in Global := true
 
 fork in run := true
