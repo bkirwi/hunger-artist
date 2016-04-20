@@ -1,8 +1,8 @@
 package com.monovore.hunger;
 
+import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.consumer.internals.ConsumerProtocol;
 import org.apache.kafka.clients.consumer.internals.PartitionAssignor;
-import org.apache.kafka.common.Cluster;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.*;
@@ -29,21 +29,29 @@ public class GroupClient {
 
     private final ApiClient api;
     private final Meta meta;
+    private final int generation;
+    private final String memberId;
 
-    public GroupClient(ApiClient api, Meta meta) {
+    public GroupClient(ApiClient api, Meta meta, int generationId, String memberId) {
         this.api = api;
         this.meta = meta;
+        this.generation = generationId;
+        this.memberId = memberId;
     }
 
     public CompletableFuture<Map<TopicPartition, Errors>> offsetCommit(
-            Map<TopicPartition, OffsetCommitRequest.PartitionData> offsets
+            Map<TopicPartition, OffsetAndMetadata> offsets
     ) {
         OffsetCommitRequest request = new OffsetCommitRequest(
                 meta.groupId,
-                OffsetCommitRequest.DEFAULT_GENERATION_ID,
-                OffsetCommitRequest.DEFAULT_MEMBER_ID,
+                generation,
+                memberId,
                 OffsetCommitRequest.DEFAULT_RETENTION_TIME,
-                offsets
+                offsets.entrySet().stream()
+                    .collect(Collectors.toMap(
+                            Map.Entry::getKey,
+                            entry -> new OffsetCommitRequest.PartitionData(entry.getValue().offset(), entry.getValue().metadata())
+                    ))
         );
 
         return api.offsetCommit(request)
@@ -56,7 +64,21 @@ public class GroupClient {
                 );
     }
 
-    public CompletableFuture<PartitionAssignor.Assignment> rejoin(Set<String> topics, List<PartitionAssignor> assignors) {
+    public CompletableFuture<Map<TopicPartition, OffsetAndMetadata>> offsetFetch(
+            List<TopicPartition> partitions
+    ) {
+        OffsetFetchRequest request = new OffsetFetchRequest(meta.groupId, partitions);
+
+        return api.offsetFetch(request).thenApply(results ->
+                results.responseData().entrySet().stream()
+                        .collect(Collectors.toMap(
+                                Map.Entry::getKey,
+                                entry -> new OffsetAndMetadata(entry.getValue().offset, entry.getValue().metadata)
+                        ))
+        );
+    }
+
+    public CompletableFuture<GroupClient> rejoin(Set<String> topics, List<PartitionAssignor> assignors) {
 
         List<JoinGroupRequest.ProtocolMetadata> protocols =
                 assignors.stream()
@@ -69,7 +91,7 @@ public class GroupClient {
                         .collect(Collectors.toList());
 
         JoinGroupRequest joinRequest =
-                new JoinGroupRequest(meta.groupId, meta.sessionTimeout, "", meta.protocolType, protocols);
+                new JoinGroupRequest(meta.groupId, meta.sessionTimeout, this.memberId, meta.protocolType, protocols);
 
         return Futures.lifting(JoinGroupResponse::errorCode, api.joinGroup(joinRequest))
                 .thenCompose(joinResponse -> {
@@ -97,6 +119,7 @@ public class GroupClient {
                         groupAssignment =
                             api.metadata(new MetadataRequest(allTopics))
                                     .thenApply(metadataResponse ->
+                                            // TODO: error check
                                             partitionAssignor.assign(metadataResponse.cluster(), subscriptions)
                                                     .entrySet().stream()
                                                     .collect(Collectors.toMap(Map.Entry::getKey,
@@ -108,13 +131,16 @@ public class GroupClient {
                         groupAssignment = CompletableFuture.completedFuture(Collections.emptyMap());
                     }
 
-                    return groupAssignment.thenCompose(assignment -> {
+                    return groupAssignment.thenCompose(assignments -> {
                         SyncGroupRequest syncRequest =
-                                new SyncGroupRequest(meta.groupId, joinResponse.generationId(), joinResponse.memberId(), assignment);
+                                new SyncGroupRequest(meta.groupId, joinResponse.generationId(), joinResponse.memberId(), assignments);
 
                         return Futures.lifting(SyncGroupResponse::errorCode, api.syncGroup(syncRequest))
-                                .thenApply(syncResponse ->
-                                        ConsumerProtocol.deserializeAssignment(syncResponse.memberAssignment()));
+                                .thenApply(syncResponse -> {
+                                    PartitionAssignor.Assignment assignment =
+                                            ConsumerProtocol.deserializeAssignment(syncResponse.memberAssignment());
+                                    return new GroupClient(this.api, this.meta, joinResponse.generationId(), joinResponse.memberId());
+                                });
                     });
                 });
     }
