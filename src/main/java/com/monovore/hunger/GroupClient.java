@@ -38,7 +38,7 @@ public class GroupClient {
         this.memberId = memberId;
     }
 
-    public CompletableFuture<Map<TopicPartition, Errors>> offsetCommit(
+    public CompletableFuture<Void> offsetCommit(
             Map<TopicPartition, OffsetAndMetadata> offsets
     ) {
         OffsetCommitRequest request = new OffsetCommitRequest(
@@ -47,20 +47,22 @@ public class GroupClient {
                 memberId,
                 OffsetCommitRequest.DEFAULT_RETENTION_TIME,
                 offsets.entrySet().stream()
-                    .collect(Collectors.toMap(
-                            Map.Entry::getKey,
-                            entry -> new OffsetCommitRequest.PartitionData(entry.getValue().offset(), entry.getValue().metadata())
-                    ))
+                        .collect(Collectors.toMap(
+                                Map.Entry::getKey,
+                                entry -> new OffsetCommitRequest.PartitionData(entry.getValue().offset(), entry.getValue().metadata())
+                        ))
         );
 
         return api.offsetCommit(request)
-                .thenApply(results ->
-                        results.responseData().entrySet().stream()
-                                .collect(Collectors.toMap(
-                                        Map.Entry::getKey,
-                                        entry -> Errors.forCode(entry.getValue())
-                                ))
-                );
+                .thenCompose(results -> {
+
+                    for (short code : results.responseData().values()) {
+                        Errors error = Errors.forCode(code);
+                        if (error != Errors.NONE) return Futures.exceptionalFuture(error.exception());
+                    }
+
+                    return CompletableFuture.completedFuture(null);
+                });
     }
 
     public CompletableFuture<Map<TopicPartition, OffsetAndMetadata>> offsetFetch(
@@ -68,13 +70,21 @@ public class GroupClient {
     ) {
         OffsetFetchRequest request = new OffsetFetchRequest(meta.groupId, partitions);
 
-        return api.offsetFetch(request).thenApply(results ->
-                results.responseData().entrySet().stream()
-                        .collect(Collectors.toMap(
-                                Map.Entry::getKey,
-                                entry -> new OffsetAndMetadata(entry.getValue().offset, entry.getValue().metadata)
-                        ))
-        );
+        return api.offsetFetch(request).thenCompose(results -> {
+
+            for (OffsetFetchResponse.PartitionData data : results.responseData().values()) {
+                Errors error = Errors.forCode(data.errorCode);
+                if (error != Errors.NONE) return Futures.exceptionalFuture(error.exception());
+            }
+
+            Map<TopicPartition, OffsetAndMetadata> result = results.responseData().entrySet().stream()
+                    .collect(Collectors.toMap(
+                            Map.Entry::getKey,
+                            entry -> new OffsetAndMetadata(entry.getValue().offset, entry.getValue().metadata)
+                    ));
+
+            return CompletableFuture.completedFuture(result);
+        });
     }
 
     public CompletableFuture<Void> heartbeat() {
@@ -119,26 +129,32 @@ public class GroupClient {
 
                         Map<String, PartitionAssignor.Subscription> subscriptions =
                                 joinResponse.members().entrySet().stream()
-                                    .collect(Collectors.toMap(Map.Entry::getKey,
-                                            entry -> ConsumerProtocol.deserializeSubscription(entry.getValue())
-                                    ));
+                                        .collect(Collectors.toMap(Map.Entry::getKey,
+                                                entry -> ConsumerProtocol.deserializeSubscription(entry.getValue())
+                                        ));
 
                         List<String> allTopics = subscriptions.values().stream()
                                 .flatMap(subscription -> subscription.topics().stream())
                                 .collect(Collectors.toList());
 
                         groupAssignment =
-                            api.metadata(new MetadataRequest(allTopics))
-                                    .thenApply(metadataResponse ->
-                                            // TODO: error check
-                                            partitionAssignor.assign(metadataResponse.cluster(), subscriptions)
+                                api.metadata(new MetadataRequest(allTopics))
+                                        .thenCompose(metadataResponse -> {
+
+                                            for (Errors error : metadataResponse.errors().values()) {
+                                                if (error != Errors.NONE)
+                                                    return Futures.exceptionalFuture(error.exception());
+                                            }
+
+                                            Map<String, ByteBuffer> result = partitionAssignor.assign(metadataResponse.cluster(), subscriptions)
                                                     .entrySet().stream()
                                                     .collect(Collectors.toMap(Map.Entry::getKey,
                                                             entry -> ConsumerProtocol.serializeAssignment(entry.getValue())
-                                                    ))
-                                    );
-                    }
-                    else {
+                                                    ));
+
+                                            return CompletableFuture.completedFuture(result);
+                                        });
+                    } else {
                         groupAssignment = CompletableFuture.completedFuture(Collections.emptyMap());
                     }
 
