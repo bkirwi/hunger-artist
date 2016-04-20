@@ -20,7 +20,6 @@ public class GroupClient {
         private final int sessionTimeout;
 
         public Meta(String groupId, String protocolType, int sessionTimeout) {
-
             this.groupId = groupId;
             this.protocolType = protocolType;
             this.sessionTimeout = sessionTimeout;
@@ -29,13 +28,13 @@ public class GroupClient {
 
     private final ApiClient api;
     private final Meta meta;
-    private final int generation;
+    private final int generationId;
     private final String memberId;
 
     public GroupClient(ApiClient api, Meta meta, int generationId, String memberId) {
         this.api = api;
         this.meta = meta;
-        this.generation = generationId;
+        this.generationId = generationId;
         this.memberId = memberId;
     }
 
@@ -44,7 +43,7 @@ public class GroupClient {
     ) {
         OffsetCommitRequest request = new OffsetCommitRequest(
                 meta.groupId,
-                generation,
+                generationId,
                 memberId,
                 OffsetCommitRequest.DEFAULT_RETENTION_TIME,
                 offsets.entrySet().stream()
@@ -76,6 +75,18 @@ public class GroupClient {
                                 entry -> new OffsetAndMetadata(entry.getValue().offset, entry.getValue().metadata)
                         ))
         );
+    }
+
+    public CompletableFuture<Void> heartbeat() {
+        HeartbeatRequest request = new HeartbeatRequest(this.meta.groupId, this.generationId, this.memberId);
+        return Futures.lifting(HeartbeatResponse::errorCode, api.heartbeat(request))
+                .thenApply(response -> null);
+    }
+
+    public CompletableFuture<Void> leaveGroup() {
+        LeaveGroupRequest request = new LeaveGroupRequest(this.meta.groupId, this.memberId);
+        return Futures.lifting(LeaveGroupResponse::errorCode, api.leaveGroup(request))
+                .thenApply(response -> null);
     }
 
     public CompletableFuture<GroupClient> rejoin(Set<String> topics, List<PartitionAssignor> assignors) {
