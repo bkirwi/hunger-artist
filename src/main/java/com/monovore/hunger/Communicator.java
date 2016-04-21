@@ -68,6 +68,12 @@ public class Communicator implements Runnable, Closeable {
 
     private CompletableFuture<Struct> send(Optional<Node> destination, ApiKeys key, Struct request) {
         CompletableFuture<Struct> responseFuture = new CompletableFuture<>();
+
+        if (!running) {
+          responseFuture.completeExceptionally(new IllegalStateException("Client has been closed!"));
+          return responseFuture;
+        }
+
         try {
             this.outbound.put(new Outbound(destination, key, request, responseFuture));
         } catch (InterruptedException e) {
@@ -104,7 +110,7 @@ public class Communicator implements Runnable, Closeable {
                 RequestSend send = new RequestSend(destination.idString(), header, message.request);
                 ClientRequest request = new ClientRequest(now, true, send, response -> {
                     if (response.wasDisconnected()) {
-                        message.responseFuture.completeExceptionally(new DisconnectException("Disconnect!"));
+                        message.responseFuture.completeExceptionally(new DisconnectException("Disconnected from node: " + destination.idString()));
                     } else {
                         Struct body = response.responseBody();
                         message.responseFuture.complete(body);
@@ -112,6 +118,7 @@ public class Communicator implements Runnable, Closeable {
                 });
                 kafka.send(request, now);
             }
+            // TODO: deal with exceptions here
             kafka.poll(POLL_TIMEOUT_MS, now);
         }
     }
