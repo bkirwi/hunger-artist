@@ -102,7 +102,7 @@ public class Communicator implements Runnable, Closeable {
                 if (!kafka.ready(destination, now)) kafka.poll(POLL_TIMEOUT_MS, now);
 
                 if (!kafka.isReady(destination, now)) {
-                    message.responseFuture.completeExceptionally(new BrokerNotAvailableException("Connection not ready!"));
+                    message.responseFuture.completeExceptionally(new BrokerNotAvailableException("Connection not ready to node: " + destination.idString()));
                     continue;
                 }
 

@@ -113,6 +113,7 @@ public class GroupClient<A> {
     }
 
     public CompletableFuture<GroupClient<Void>> leave() {
+        log.info("Member '{}' leaving group {}", memberId, meta.groupId);
         LeaveGroupRequest request = new LeaveGroupRequest(this.meta.groupId, this.memberId);
         return Futures.lifting(LeaveGroupResponse::errorCode, api.leaveGroup(request))
                 .thenApply(response -> new GroupClient<Void>(api, meta, null));
@@ -142,7 +143,7 @@ public class GroupClient<A> {
         JoinGroupRequest joinRequest =
                 new JoinGroupRequest(meta.groupId, meta.sessionTimeout, this.memberId, meta.protocolType, protocols);
 
-        log.info("Joining group '{}' with member id '{}'", meta.groupId, memberId);
+        log.info("Joining group '{}' with member id '{}'...", meta.groupId, memberId);
 
         return Futures.lifting(JoinGroupResponse::errorCode, api.joinGroup(joinRequest))
                 .thenCompose(joinResponse -> {
@@ -150,7 +151,7 @@ public class GroupClient<A> {
                     final CompletableFuture<Map<String, ByteBuffer>> groupAssignment;
                     if (joinResponse.isLeader()) {
 
-                        log.info("Joined group '{}' as leader; generating assignments", meta.groupId);
+                        log.info("Joined group '{}' as leader; generating assignments and syncing...", meta.groupId);
 
                         String protocol = joinResponse.groupProtocol();
                         PartitionAssignor partitionAssignor =
@@ -187,6 +188,7 @@ public class GroupClient<A> {
                                             return CompletableFuture.completedFuture(result);
                                         });
                     } else {
+                        log.info("Joined group '{}' as follower; syncing...", meta.groupId);
                         groupAssignment = CompletableFuture.completedFuture(Collections.emptyMap());
                     }
 
@@ -196,9 +198,10 @@ public class GroupClient<A> {
 
                         return Futures.lifting(SyncGroupResponse::errorCode, api.syncGroup(syncRequest))
                                 .thenApply(syncResponse -> {
+                                    log.info("Synced with group '{}'; done.", meta.groupId);
                                     Assignment assignment =
                                             ConsumerProtocol.deserializeAssignment(syncResponse.memberAssignment());
-                                    return new GroupClient<Assignment>(this.api, this.meta, joinResponse.generationId(), joinResponse.memberId(), assignment);
+                                    return new GroupClient<>(this.api, this.meta, joinResponse.generationId(), joinResponse.memberId(), assignment);
                                 });
                     });
                 });

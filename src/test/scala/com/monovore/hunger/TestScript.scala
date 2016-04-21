@@ -60,8 +60,11 @@ object TestScript {
     val meta = new Meta("other-group", 6000)
     val groupClient =
       communicator.group(meta).get()
-        .join(Set("test").asJava, List(new RangeAssignor: PartitionAssignor).asJava).get()
+        .join(Set("test").asJava, List[PartitionAssignor](new RangeAssignor).asJava).get()
 
     println(groupClient.assignment().partitions())
+
+    groupClient.heartbeat().get()
+    groupClient.leave().get()
   }
 }
