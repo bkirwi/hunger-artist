@@ -7,10 +7,7 @@ import org.apache.kafka.common.errors.BrokerNotAvailableException;
 import org.apache.kafka.common.errors.DisconnectException;
 import org.apache.kafka.common.protocol.ApiKeys;
 import org.apache.kafka.common.protocol.types.Struct;
-import org.apache.kafka.common.requests.GroupCoordinatorRequest;
-import org.apache.kafka.common.requests.GroupCoordinatorResponse;
-import org.apache.kafka.common.requests.RequestHeader;
-import org.apache.kafka.common.requests.RequestSend;
+import org.apache.kafka.common.requests.*;
 import org.apache.kafka.common.utils.Time;
 
 import java.io.Closeable;
@@ -56,6 +53,11 @@ public class Communicator implements Runnable, Closeable {
 
     public ApiClient node(Node node) {
         return new ApiClient(((key, request) -> send(Optional.of(node), key, request)));
+    }
+
+    public CompletableFuture<GroupClient<Void>> group(GroupClient.Meta meta) {
+        return Futures.lifting(GroupCoordinatorResponse::errorCode, this.anyone().groupCoordinator(new GroupCoordinatorRequest(meta.groupId)))
+                .thenApply(groupCoordinatorResponse -> new GroupClient<Void>(this.node(groupCoordinatorResponse.node()), meta, null));
     }
 
     public CompletableFuture<ApiClient> coordinator(String groupID) {
