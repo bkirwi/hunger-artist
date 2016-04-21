@@ -66,9 +66,9 @@ public class GroupClient {
     }
 
     public CompletableFuture<Map<TopicPartition, OffsetAndMetadata>> offsetFetch(
-            List<TopicPartition> partitions
+            Set<TopicPartition> partitions
     ) {
-        OffsetFetchRequest request = new OffsetFetchRequest(meta.groupId, partitions);
+        OffsetFetchRequest request = new OffsetFetchRequest(meta.groupId, new ArrayList(partitions));
 
         return api.offsetFetch(request).thenCompose(results -> {
 
@@ -93,13 +93,22 @@ public class GroupClient {
                 .thenApply(response -> null);
     }
 
-    public CompletableFuture<Void> leaveGroup() {
+    public CompletableFuture<GroupClient> leaveGroup() {
         LeaveGroupRequest request = new LeaveGroupRequest(this.meta.groupId, this.memberId);
         return Futures.lifting(LeaveGroupResponse::errorCode, api.leaveGroup(request))
-                .thenApply(response -> null);
+                .thenApply(response -> new GroupClient(api, meta, OffsetCommitRequest.DEFAULT_GENERATION_ID, OffsetCommitRequest.DEFAULT_MEMBER_ID));
     }
 
-    public CompletableFuture<GroupClient> rejoin(Set<String> topics, List<PartitionAssignor> assignors) {
+    /**
+     * Join or rejoin a group.
+     *
+     * Once this method is called, the current client becomes invalid and should be discarded.
+     *
+     * @param topics The set of topics we want to subscribe to.
+     * @param assignors A list of possible partition-assignment strategies, in order of preference.
+     * @return a new client that has successfully joined the group, or an error.
+     */
+    public CompletableFuture<GroupClient> join(Set<String> topics, List<PartitionAssignor> assignors) {
 
         List<JoinGroupRequest.ProtocolMetadata> protocols =
                 assignors.stream()
