@@ -4,7 +4,10 @@ import java.net.InetSocketAddress
 import java.nio.ByteBuffer
 import java.util.Collections
 
+import com.monovore.hunger.GroupClient.Meta
 import com.monovore.hunger._
+import org.apache.kafka.clients.consumer.RangeAssignor
+import org.apache.kafka.clients.consumer.internals.PartitionAssignor
 import org.apache.kafka.common.TopicPartition
 import org.apache.kafka.common.metrics.Metrics
 import org.apache.kafka.common.network.PlaintextChannelBuilder
@@ -53,5 +56,12 @@ object TestScript {
     println(commit)
     val fetch = client.offsetFetch(new OffsetFetchRequest("bug", List(partition).asJava)).get()
     println(fetch)
+
+    val meta = new Meta("other-group", 6000)
+    val groupClient =
+      communicator.group(meta).get()
+        .join(Set("test").asJava, List(new RangeAssignor: PartitionAssignor).asJava).get()
+
+    println(groupClient.assignment().partitions())
   }
 }

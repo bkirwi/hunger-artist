@@ -3,26 +3,39 @@ package com.monovore.hunger;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.clients.consumer.internals.ConsumerProtocol;
 import org.apache.kafka.clients.consumer.internals.PartitionAssignor;
+import org.apache.kafka.clients.consumer.internals.PartitionAssignor.Assignment;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.protocol.Errors;
 import org.apache.kafka.common.requests.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
-public class GroupClient {
+public class GroupClient<A> {
+
+    private static final Logger log = LoggerFactory.getLogger(GroupClient.class);
+
+    public A assignment() {
+        return assignment;
+    }
 
     static class Meta {
-        private final String groupId;
-        private final String protocolType;
-        private final int sessionTimeout;
+        public final String groupId;
+        public final String protocolType;
+        public final int sessionTimeout;
 
         public Meta(String groupId, String protocolType, int sessionTimeout) {
             this.groupId = groupId;
             this.protocolType = protocolType;
             this.sessionTimeout = sessionTimeout;
+        }
+
+        public Meta(String groupId, int sessionTimeout) {
+            this(groupId, ConsumerProtocol.PROTOCOL_TYPE, sessionTimeout);
         }
     }
 
@@ -30,12 +43,18 @@ public class GroupClient {
     private final Meta meta;
     private final int generationId;
     private final String memberId;
+    private A assignment;
 
-    public GroupClient(ApiClient api, Meta meta, int generationId, String memberId) {
+    public GroupClient(ApiClient api, Meta meta, A assignment) {
+        this(api, meta, OffsetCommitRequest.DEFAULT_GENERATION_ID, OffsetCommitRequest.DEFAULT_MEMBER_ID, assignment);
+    }
+
+    public GroupClient(ApiClient api, Meta meta, int generationId, String memberId, A assignment) {
         this.api = api;
         this.meta = meta;
         this.generationId = generationId;
         this.memberId = memberId;
+        this.assignment = assignment;
     }
 
     public CompletableFuture<Void> offsetCommit(
@@ -68,7 +87,7 @@ public class GroupClient {
     public CompletableFuture<Map<TopicPartition, OffsetAndMetadata>> offsetFetch(
             Set<TopicPartition> partitions
     ) {
-        OffsetFetchRequest request = new OffsetFetchRequest(meta.groupId, new ArrayList(partitions));
+        OffsetFetchRequest request = new OffsetFetchRequest(meta.groupId, new ArrayList<TopicPartition>(partitions));
 
         return api.offsetFetch(request).thenCompose(results -> {
 
@@ -93,10 +112,10 @@ public class GroupClient {
                 .thenApply(response -> null);
     }
 
-    public CompletableFuture<GroupClient> leaveGroup() {
+    public CompletableFuture<GroupClient<Void>> leave() {
         LeaveGroupRequest request = new LeaveGroupRequest(this.meta.groupId, this.memberId);
         return Futures.lifting(LeaveGroupResponse::errorCode, api.leaveGroup(request))
-                .thenApply(response -> new GroupClient(api, meta, OffsetCommitRequest.DEFAULT_GENERATION_ID, OffsetCommitRequest.DEFAULT_MEMBER_ID));
+                .thenApply(response -> new GroupClient<Void>(api, meta, null));
     }
 
     /**
@@ -108,7 +127,7 @@ public class GroupClient {
      * @param assignors A list of possible partition-assignment strategies, in order of preference.
      * @return a new client that has successfully joined the group, or an error.
      */
-    public CompletableFuture<GroupClient> join(Set<String> topics, List<PartitionAssignor> assignors) {
+    public CompletableFuture<GroupClient<Assignment>> join(Set<String> topics, List<PartitionAssignor> assignors) {
 
         List<JoinGroupRequest.ProtocolMetadata> protocols =
                 assignors.stream()
@@ -123,11 +142,15 @@ public class GroupClient {
         JoinGroupRequest joinRequest =
                 new JoinGroupRequest(meta.groupId, meta.sessionTimeout, this.memberId, meta.protocolType, protocols);
 
+        log.info("Joining group '{}' with member id '{}'", meta.groupId, memberId);
+
         return Futures.lifting(JoinGroupResponse::errorCode, api.joinGroup(joinRequest))
                 .thenCompose(joinResponse -> {
 
                     final CompletableFuture<Map<String, ByteBuffer>> groupAssignment;
                     if (joinResponse.isLeader()) {
+
+                        log.info("Joined group '{}' as leader; generating assignments", meta.groupId);
 
                         String protocol = joinResponse.groupProtocol();
                         PartitionAssignor partitionAssignor =
@@ -173,9 +196,9 @@ public class GroupClient {
 
                         return Futures.lifting(SyncGroupResponse::errorCode, api.syncGroup(syncRequest))
                                 .thenApply(syncResponse -> {
-                                    PartitionAssignor.Assignment assignment =
+                                    Assignment assignment =
                                             ConsumerProtocol.deserializeAssignment(syncResponse.memberAssignment());
-                                    return new GroupClient(this.api, this.meta, joinResponse.generationId(), joinResponse.memberId());
+                                    return new GroupClient<Assignment>(this.api, this.meta, joinResponse.generationId(), joinResponse.memberId(), assignment);
                                 });
                     });
                 });
