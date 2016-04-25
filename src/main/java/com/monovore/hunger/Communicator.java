@@ -17,25 +17,12 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 
-public class Communicator implements Runnable, Closeable {
-
-    private static class Outbound {
-        final Optional<Node> destination;
-        final ApiKeys key;
-        final Struct request;
-        final CompletableFuture<Struct> responseFuture;
-
-        Outbound(Optional<Node> destination, ApiKeys key, Struct request, CompletableFuture<Struct> responseFuture) {
-            this.destination = destination;
-            this.key = key;
-            this.request = request;
-            this.responseFuture = responseFuture;
-        }
-    }
+public class Communicator implements Closeable {
 
     private final KafkaClient kafka;
     private final BlockingQueue<Outbound> outbound;
     private final Time time;
+    private final Thread thread;
 
     private volatile boolean running = true;
 
@@ -45,6 +32,9 @@ public class Communicator implements Runnable, Closeable {
         this.kafka = kafka;
         this.outbound = new LinkedBlockingQueue<>();
         this.time = time;
+        this.thread = new Thread(this::run);
+        this.thread.setDaemon(true);
+        this.thread.start();
     }
 
     public ApiClient anyone() {
@@ -85,7 +75,12 @@ public class Communicator implements Runnable, Closeable {
     }
 
     @Override
-    public void run() {
+    public void close() throws IOException {
+        running = false;
+        kafka.close();
+    }
+
+    private void run() {
         Outbound next;
         while(running && !Thread.interrupted()) {
             long now = time.milliseconds();
@@ -123,9 +118,17 @@ public class Communicator implements Runnable, Closeable {
         }
     }
 
-    @Override
-    public void close() throws IOException {
-        running = false;
-        kafka.close();
+    private static class Outbound {
+        final Optional<Node> destination;
+        final ApiKeys key;
+        final Struct request;
+        final CompletableFuture<Struct> responseFuture;
+
+        Outbound(Optional<Node> destination, ApiKeys key, Struct request, CompletableFuture<Struct> responseFuture) {
+            this.destination = destination;
+            this.key = key;
+            this.request = request;
+            this.responseFuture = responseFuture;
+        }
     }
 }

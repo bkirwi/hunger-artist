@@ -23,11 +23,10 @@ object TestScript {
   def main(args: Array[String]): Unit = {
 
     val bootstrap = List(new InetSocketAddress(9092)).asJava
-    val kafka = Client.fromWhatever(bootstrap, new PlaintextChannelBuilder, new SystemTime, new Metrics)
-    val communicator = new Communicator(kafka, new SystemTime)
-    val thread = new Thread(communicator)
-    thread.setDaemon(true)
-    thread.start()
+    val time = new SystemTime
+    val metrics = new Metrics
+    val kafka = Client.fromWhatever(bootstrap, new PlaintextChannelBuilder, time, metrics)
+    val communicator = new Communicator(kafka, time)
     val client = new Client(communicator)
 
     val records = MemoryRecords.emptyRecords(ByteBuffer.allocate(1000000), CompressionType.NONE)

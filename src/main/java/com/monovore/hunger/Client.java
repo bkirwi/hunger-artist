@@ -154,7 +154,7 @@ public class Client {
         Metadata metadata = new Metadata();
         metadata.update(Cluster.bootstrap(bootstrapHosts), time.milliseconds());
         String clientId = "test-client";
-        NetworkClient kafka = new NetworkClient(selector, metadata, clientId, 100, 100, 100 * 1024, 100 * 1024, 30000, time);
+        NetworkClient kafka = new NetworkClient(selector, metadata, clientId, 100, 100, 100 * 1024, 100 * 1024, 30 * 1000, time);
         return kafka;
     }
 }
