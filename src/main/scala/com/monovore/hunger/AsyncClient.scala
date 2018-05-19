@@ -25,7 +25,7 @@ object AsyncClient {
 
   case class Config(
     clientId: String,
-    requestTimeoutMs: Int = 1000,
+    requestTimeoutMs: Int = 15000,
     metadataRetryBackoffMs: Long = 100L,
     connectionsMaxIdleMs: Long = 100L,
     metadataExpireMs: Long = 100L,
@@ -42,7 +42,7 @@ object AsyncClient {
 
     import config._
 
-    val logContext = new LogContext("[Communicator clientId=" + clientId + "] ")
+    val logContext = new LogContext("[Async clientId=" + clientId + "] ")
 
     val time = Time.SYSTEM
 
@@ -51,7 +51,7 @@ object AsyncClient {
     val metadata = new Metadata(metadataRetryBackoffMs, metadataExpireMs, false, false, new ClusterResourceListeners)
     val addresses = brokers.asJava
     metadata.update(Cluster.bootstrap(addresses), Collections.emptySet[String], 0)
-    val metricGrpPrefix = "consumer"
+    val metricGrpPrefix = "async"
     val channelBuilder: ChannelBuilder = new PlaintextChannelBuilder
     channelBuilder.configure(Map.empty[String, Any].asJava)
 
@@ -87,7 +87,7 @@ object AsyncClient {
  * An event loop wrapped around the standard Kafka network client.
  *
  */
-class AsyncClient(val kafka: KafkaClient, val time: Time) extends Runnable with Closeable {
+class AsyncClient(kafka: KafkaClient, time: Time) extends Runnable with Closeable {
 
   @volatile
   private[this] var closed: Boolean = false
@@ -95,13 +95,19 @@ class AsyncClient(val kafka: KafkaClient, val time: Time) extends Runnable with 
 
   private[this] val buffers: ConcurrentHashMap[Node, ArrayBuffer[Message]] = new ConcurrentHashMap()
 
-  def send[A <: AbstractRequest](node: Node, request: AbstractRequest.Builder[A])(implicit ApiMethod: ApiMethod[A]): IO[ApiMethod.Response] = {
+  def send[A <: AbstractRequest](request: AbstractRequest.Builder[A])(implicit ApiMethod: ApiMethod[A]): IO[ApiMethod.Response] =
+    send(Node.noNode, request)
+
+  def send[A <: AbstractRequest](node: Node, request: AbstractRequest.Builder[A])(implicit method: ApiMethod[A]): IO[method.Response] =
     IO.async { callback =>
       doSend(Node.noNode, request, (response) => {
         val result =
-          if (response.wasDisconnected) Left(DisconnectException.INSTANCE)
+          if (response.wasDisconnected) {
+            println(response)
+            Left(DisconnectException.INSTANCE)
+          }
           else if (response.hasResponse) response.responseBody match {
-            case ApiMethod.Response(expected) => Right(expected)
+            case method.Response(expected) => Right(expected)
             case unexpected => Left(new MatchError(s"Got unexpected response type: ${unexpected.getClass}"))
           }
           else if (response.versionMismatch != null) Left(response.versionMismatch)
@@ -110,7 +116,6 @@ class AsyncClient(val kafka: KafkaClient, val time: Time) extends Runnable with 
         callback(result)
       })
     }
-  }
 
   private[this] def doSend(node: Node, builder: AbstractRequest.Builder[_ <: AbstractRequest], callback: RequestCompletionHandler): Unit = synchronized {
     val buffer = buffers.computeIfAbsent(node, (_: Node) => new ArrayBuffer[Message]())
@@ -139,7 +144,8 @@ class AsyncClient(val kafka: KafkaClient, val time: Time) extends Runnable with 
         }
       }
 
-      kafka.poll(1000L, currentMs)
+      // Why is this sensitive to ~anything?
+      kafka.poll(15000L, currentMs)
     }
   } finally {
     kafka.close()

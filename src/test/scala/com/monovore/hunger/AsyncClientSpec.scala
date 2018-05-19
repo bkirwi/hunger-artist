@@ -4,6 +4,7 @@ import java.net.InetSocketAddress
 
 import cats.effect.IO
 import net.manub.embeddedkafka.{EmbeddedKafka, EmbeddedKafkaConfig}
+import org.apache.kafka.clients.consumer.RoundRobinAssignor
 import org.apache.kafka.common.Node
 import org.apache.kafka.common.requests.CreateTopicsRequest.TopicDetails
 import org.apache.kafka.common.requests.{CreateTopicsRequest, MetadataRequest}
@@ -39,7 +40,9 @@ class AsyncClientSpec extends WordSpec with EmbeddedKafka {
           _ <- printIO(created.errors())
           meta <- client.send(Node.noNode, allTopicsRequest)
           _ <- printIO(meta.topicMetadata.asScala.map { _.topic })
-        } yield ()
+          groupClient = GroupClient(client)
+          done <- groupClient.runGroup("foosball", new RoundRobinAssignor, Set("test-topic"), printIO)
+        } yield done
 
         done.unsafeRunSync()
 
