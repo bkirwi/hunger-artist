@@ -88,7 +88,7 @@ object AsyncClient {
  * An event loop wrapped around the standard Kafka network client.
  *
  */
-class AsyncClient(kafka: KafkaClient, time: Time) extends Runnable with Closeable {
+class AsyncClient(kafka: KafkaClient, time: Time = Time.SYSTEM) extends Runnable with Closeable {
 
   private[this] val log = LoggerFactory.getLogger(getClass)
 

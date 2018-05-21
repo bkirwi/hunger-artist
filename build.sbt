@@ -10,9 +10,20 @@ val globalSettings = Seq(
 
 lazy val root =
   project.in(file("."))
-    .aggregate(core)
+    .aggregate(core, examples)
     .settings(globalSettings: _*)
 
 lazy val core =
   project.in(file("core"))
     .settings(globalSettings: _*)
+
+lazy val examples =
+  project.in(file("examples"))
+    .settings(globalSettings: _*)
+    .settings(
+      libraryDependencies ++= Seq(
+        "com.monovore" %% "decline" % "0.4.1",
+        "org.slf4j" % "slf4j-log4j12" % "1.7.25"
+      )
+    )
+    .dependsOn(core)
