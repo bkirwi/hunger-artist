@@ -148,7 +148,9 @@ class AsyncClient(kafka: KafkaClient, time: Time = Time.SYSTEM) extends Runnable
           if (node != null && kafka.ready(node, currentMs)) {
 
             for (message <- buffer) {
-              val request = kafka.newClientRequest(node.idString, message.builder, currentMs, true, message.callback)
+              // TODO: this should be false `iff` the request is a produce with acks=0. Plumb this info through!
+              val expectResponse = true
+              val request = kafka.newClientRequest(node.idString, message.builder, currentMs, expectResponse, message.callback)
               kafka.send(request, currentMs)
             }
             buffer.clear()
