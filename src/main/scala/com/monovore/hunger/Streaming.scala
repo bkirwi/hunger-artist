@@ -22,7 +22,7 @@ object Streaming {
     def fetch(offset: Long): IO[FetchResponse.PartitionData] = {
       val fetchHash = new util.LinkedHashMap[TopicPartition, PartitionData]()
       fetchHash.put(partition, new FetchRequest.PartitionData(offset, FetchRequest.INVALID_LOG_START_OFFSET, 100000))
-      client.send(node, FetchRequest.Builder.forConsumer(0, 1, fetchHash))
+      client.sendUnchecked(node, FetchRequest.Builder.forConsumer(0, 1, fetchHash))
         .flatMap { response =>
           val partitionResponse = response.responseData.get(partition)
           Option(partitionResponse.error.exception)

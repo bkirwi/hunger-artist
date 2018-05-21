@@ -5,16 +5,17 @@ import java.net.InetSocketAddress
 import java.util.Collections
 import java.util.concurrent.{ConcurrentHashMap, CountDownLatch}
 
-import cats.effect.{Async, IO}
+import cats.effect.IO
 import com.monovore.hunger.AsyncClient.Message
 import org.apache.kafka.clients._
 import org.apache.kafka.common.errors.DisconnectException
 import org.apache.kafka.common.internals.ClusterResourceListeners
 import org.apache.kafka.common.metrics._
 import org.apache.kafka.common.network.{ChannelBuilder, PlaintextChannelBuilder, Selector}
-import org.apache.kafka.common.requests.{AbstractRequest, AbstractResponse}
+import org.apache.kafka.common.requests.AbstractRequest
 import org.apache.kafka.common.utils.{LogContext, Time}
 import org.apache.kafka.common.{Cluster, Node}
+import org.slf4j.LoggerFactory
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
@@ -25,12 +26,12 @@ object AsyncClient {
 
   case class Config(
     clientId: String,
-    requestTimeoutMs: Int = 15000,
+    requestTimeoutMs: Int = 30000,
     metadataRetryBackoffMs: Long = 100L,
-    connectionsMaxIdleMs: Long = 100L,
-    metadataExpireMs: Long = 100L,
-    reconnectBackoffMs: Long = 100L,
-    reconnectBackoffMaxMs: Long = 100L,
+    connectionsMaxIdleMs: Long = 60 * 1000L,
+    metadataExpireMs: Long = 5 * 60 * 1000L,
+    reconnectBackoffMs: Long = 500L,
+    reconnectBackoffMaxMs: Long = 1000L,
     sendBuffer: Int = 100 * 1000,
     receiveBuffer: Int = 100 * 1000
   )
@@ -89,21 +90,31 @@ object AsyncClient {
  */
 class AsyncClient(kafka: KafkaClient, time: Time) extends Runnable with Closeable {
 
+  private[this] val log = LoggerFactory.getLogger(getClass)
+
   @volatile
   private[this] var closed: Boolean = false
   private[this] val awaitClosed: CountDownLatch = new CountDownLatch(1)
 
   private[this] val buffers: ConcurrentHashMap[Node, ArrayBuffer[Message]] = new ConcurrentHashMap()
 
-  def send[A <: AbstractRequest](request: AbstractRequest.Builder[A])(implicit ApiMethod: ApiMethod[A]): IO[ApiMethod.Response] =
+  def send[A <: AbstractRequest](request: AbstractRequest.Builder[A])(implicit method: ApiMethod[A]): IO[method.Response] =
     send(Node.noNode, request)
 
+  def sendUnchecked[A <: AbstractRequest](request: AbstractRequest.Builder[A])(implicit method: ApiMethod[A]): IO[method.Response] =
+    sendUnchecked(Node.noNode, request)
+
   def send[A <: AbstractRequest](node: Node, request: AbstractRequest.Builder[A])(implicit method: ApiMethod[A]): IO[method.Response] =
+    for {
+      response <- sendUnchecked(node, request)
+      _ <- KafkaUtils.checkErrors(response)
+    } yield response
+
+  def sendUnchecked[A <: AbstractRequest](node: Node, request: AbstractRequest.Builder[A])(implicit method: ApiMethod[A]): IO[method.Response] =
     IO.async { callback =>
       doSend(Node.noNode, request, (response) => {
         val result =
           if (response.wasDisconnected) {
-            println(response)
             Left(DisconnectException.INSTANCE)
           }
           else if (response.hasResponse) response.responseBody match {
@@ -135,6 +146,7 @@ class AsyncClient(kafka: KafkaClient, time: Time) extends Runnable with Closeabl
           val node = if (nodeOption.isEmpty) kafka.leastLoadedNode(currentMs) else nodeOption
 
           if (node != null && kafka.ready(node, currentMs)) {
+
             for (message <- buffer) {
               val request = kafka.newClientRequest(node.idString, message.builder, currentMs, true, message.callback)
               kafka.send(request, currentMs)
@@ -145,7 +157,7 @@ class AsyncClient(kafka: KafkaClient, time: Time) extends Runnable with Closeabl
       }
 
       // Why is this sensitive to ~anything?
-      kafka.poll(15000L, currentMs)
+      kafka.poll(2000L, currentMs)
     }
   } finally {
     kafka.close()

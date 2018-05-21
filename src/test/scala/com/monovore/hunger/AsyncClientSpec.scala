@@ -3,6 +3,7 @@ package com.monovore.hunger
 import java.net.InetSocketAddress
 
 import cats.effect.IO
+import com.monovore.hunger
 import net.manub.embeddedkafka.{EmbeddedKafka, EmbeddedKafkaConfig}
 import org.apache.kafka.clients.consumer.RoundRobinAssignor
 import org.apache.kafka.common.Node
@@ -33,20 +34,23 @@ class AsyncClientSpec extends WordSpec with EmbeddedKafka {
         val allTopicsRequest = MetadataRequest.Builder.allTopics()
 
         val done = for {
-          meta <- client.send(Node.noNode, allTopicsRequest)
+          meta <- client.sendUnchecked(Node.noNode, allTopicsRequest)
           _ <- printIO(meta.topicMetadata())
           createTopicsRequest: CreateTopicsRequest.Builder = new CreateTopicsRequest.Builder(Map("test-topic" -> new TopicDetails(2, 1.toShort)).asJava, 10000)
-          created <- client.send(Node.noNode, createTopicsRequest)
+          created <- client.sendUnchecked(Node.noNode, createTopicsRequest)
           _ <- printIO(created.errors())
-          meta <- client.send(Node.noNode, allTopicsRequest)
+          meta <- client.sendUnchecked(Node.noNode, allTopicsRequest)
           _ <- printIO(meta.topicMetadata.asScala.map { _.topic })
-          groupClient = GroupClient(client)
-          done <- groupClient.runGroup("foosball", new RoundRobinAssignor, Set("test-topic"), printIO)
+          groupClient = GroupClient(client, "foosball")
+          protocol = new GroupClient.Partitioned(client, new RoundRobinAssignor, Set("test-topic"), printIO)
+          done <- groupClient.runGroup(protocol)
         } yield done
 
-        done.unsafeRunSync()
-
-        client.close()
+        try {
+          done.unsafeRunSync()
+        } finally {
+          client.close()
+        }
       }
     }
   }
