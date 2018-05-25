@@ -14,12 +14,13 @@ import scala.collection.JavaConverters._
 
 object Streaming {
 
-  def consume(client: AsyncClient, node: Node): Stream[IO, Record] = {
-
-    val partition = new TopicPartition("test-topic", 0)
+  def consume(
+    client: AsyncClient,
+    partition: TopicPartition
+  ): Stream[IO, Record] = {
 
     // Fetch a single batch, starting at the given offset, from the given partition.
-    def fetch(offset: Long): IO[FetchResponse.PartitionData] = {
+    def fetch(node: Node, offset: Long): IO[FetchResponse.PartitionData] = {
       val fetchHash = new util.LinkedHashMap[TopicPartition, PartitionData]()
       fetchHash.put(partition, new FetchRequest.PartitionData(offset, FetchRequest.INVALID_LOG_START_OFFSET, 100000))
       client.sendUnchecked(node, FetchRequest.Builder.forConsumer(0, 1, fetchHash))
@@ -31,13 +32,17 @@ object Streaming {
         }
     }
 
-    def streamFrom(offset: Long): Stream[IO, Record] = {
+    def streamFrom(node: Node, offset: Long): Stream[IO, Record] = {
       for {
-        response <- Stream.eval(fetch(offset))
-        record <- Stream.emits(response.records.records.asScala.toVector) ++ streamFrom(offset)
+        response <- Stream.eval(fetch(node, offset))
+        record <- Stream.emits(response.records.records.asScala.toVector) ++ streamFrom(node, offset)
       } yield record
     }
 
-    streamFrom(0L)
+    for {
+      response <- Stream.eval(client.send(new MetadataRequest.Builder(List(partition.topic).asJava, false)))
+      leader = response.cluster.leaderFor(partition)
+      message <- streamFrom(leader, 0L)
+    } yield message
   }
 }
